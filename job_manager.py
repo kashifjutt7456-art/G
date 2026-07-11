@@ -93,7 +93,7 @@ class JobManager:
                 return
             net_creds = self.accounts.load_network_credentials(network_profile["profile_id"])
             try:
-                await vpn.connect(net_creds, network_profile.get("country"))
+                await vpn.connect(net_creds, network_profile.get("country") or "US")
                 proxy = vpn.as_proxy()
                 reporter.network_status = await vpn.status()
                 # Surface before/after IP + exit country in the live Workers feed
