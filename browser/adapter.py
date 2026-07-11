@@ -33,6 +33,10 @@ class BrowserAdapter(ABC):
         """Type text into the element matching selector."""
 
     @abstractmethod
+    async def press_and_hold(self, selector: str, duration_ms: int = 10000) -> None:
+        """Simulate a mouse press and hold on an element for the specified duration (for CAPTCHAs)."""
+
+    @abstractmethod
     async def upload(self, selector: str, file_path: str) -> None:
         """Attach a local file to a file input matching selector."""
 

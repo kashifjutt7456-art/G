@@ -40,6 +40,7 @@ from typing import Any, Optional
 from urllib.parse import urljoin
 
 from browser.adapter import BrowserAdapter
+from browser.factory import create_browser_adapter
 from account_creation.identity import Identity, generate_identity
 from reporter import Reporter
 
@@ -146,9 +147,9 @@ def _generate_fiverr_username(identity: Identity) -> str:
 
 
 async def _signup_fiverr(
-    browser: BrowserAdapter, reporter: Reporter, identity: Identity, job: dict[str, Any]
-) -> Optional[str]:
-    """Open a new tab and drive Fiverr signup there, leaving the Outlook tab
+    outlook_browser: BrowserAdapter, fiverr_browser: BrowserAdapter, reporter: Reporter, identity: Identity, job: dict[str, Any]
+) -> bool:
+    """Drive Fiverr signup in the dedicated Fiverr browser."""
     (and its logged-in session) untouched. Returns the Fiverr tab handle, or
     None if signup couldn't proceed (reporter already recorded why)."""
     signup_gig_url = (job.get("metadata") or {}).get("fiverr_signup_url")
@@ -158,59 +159,63 @@ async def _signup_fiverr(
             "only proven Fiverr signup path opens a gig's Contact Seller panel; "
             "FGOS must supply a gig URL per job before this can run live."
         )
-        return None
+        return False
 
-    if not reporter.step("Opening Fiverr signup gig (new tab)"):
+    if not reporter.step("Opening Fiverr signup gig"):
         reporter.blocked("Aborted by FGOS (campaign paused) before Fiverr signup")
-        return None
-    fiverr_tab = await browser.open_tab(signup_gig_url)
+        return False
+    await fiverr_browser.open(signup_gig_url)
 
-    title = (await browser.page_title() or "").lower()
+    title = (await fiverr_browser.page_title() or "").lower()
     if "needs a human touch" in title or "captcha" in title:
-        screenshot = await browser.screenshot()
-        reporter.add_screenshot_ref(f"fiverr_captcha_{identity.email}.png")
-        reporter.needs_review(
-            f"Fiverr signup hit a CAPTCHA/verification wall (title='{title}')",
-            metadata={"email": identity.email, "screenshot_bytes": len(screenshot)},
-        )
-        return None
+        reporter.step(f"Fiverr CAPTCHA detected ('{title}'). Attempting to press and hold #px-captcha...")
+        try:
+            await fiverr_browser.press_and_hold("#px-captcha", duration_ms=10500)
+            await asyncio.sleep(5)
+            title = (await fiverr_browser.page_title() or "").lower()
+        except Exception as e:
+            reporter.step(f"Failed to press and hold CAPTCHA: {e}")
+            
+        if "needs a human touch" in title or "captcha" in title:
+            screenshot = await fiverr_browser.screenshot()
+            reporter.add_screenshot_ref(f"fiverr_captcha_{identity.email}.png")
+            reporter.needs_review(
+                f"Fiverr signup hit a CAPTCHA/verification wall (title='{title}')",
+                metadata={"email": identity.email, "screenshot_bytes": len(screenshot)},
+            )
+            return False
 
     if not reporter.step("Opening Fiverr Contact Seller panel"):
         reporter.blocked("Aborted by FGOS (campaign paused) before contacting seller")
-        return None
-    await browser.click(CONTACT_SELLER_BUTTON_SELECTOR)
-    await browser.click(CONTINUE_WITH_EMAIL_SELECTOR)
+        return False
+    await fiverr_browser.click(CONTACT_SELLER_BUTTON_SELECTOR)
+    await fiverr_browser.click(CONTINUE_WITH_EMAIL_SELECTOR)
 
     if not reporter.step("Filling Fiverr signup form"):
         reporter.blocked("Aborted by FGOS (campaign paused) mid Fiverr signup")
-        return None
-    await browser.type(FIVERR_EMAIL_FIELD_SELECTOR, identity.email, humanize=False)
-    await browser.type(FIVERR_PASSWORD_FIELD_SELECTOR, identity.password, humanize=False)
-    await browser.click(FIVERR_CONTINUE_BUTTON_SELECTOR)
+        return False
+    await fiverr_browser.type(FIVERR_EMAIL_FIELD_SELECTOR, identity.email, humanize=False)
+    await fiverr_browser.type(FIVERR_PASSWORD_FIELD_SELECTOR, identity.password, humanize=False)
+    await fiverr_browser.click(FIVERR_CONTINUE_BUTTON_SELECTOR)
 
     fiverr_username = _generate_fiverr_username(identity)
-    await browser.type(FIVERR_USERNAME_FIELD_SELECTOR, fiverr_username, humanize=False)
-    await browser.click(FIVERR_CREATE_ACCOUNT_BUTTON_SELECTOR)
+    await fiverr_browser.type(FIVERR_USERNAME_FIELD_SELECTOR, fiverr_username, humanize=False)
+    await fiverr_browser.click(FIVERR_CREATE_ACCOUNT_BUTTON_SELECTOR)
 
     identity.fiverr_username = fiverr_username
     reporter.step(f"Fiverr signup submitted: {fiverr_username}")
-    return fiverr_tab
+    return True
 
 
 async def _locate_and_open_verification_link(
-    browser: BrowserAdapter,
+    outlook_browser: BrowserAdapter,
+    fiverr_browser: BrowserAdapter,
     reporter: Reporter,
-    outlook_tab: str,
-    fiverr_tab: str,
     identity: Identity,
-) -> Optional[str]:
-    """Switch to the Outlook tab, find the Fiverr verification email, extract
-    the activation link, then open it back in the Fiverr tab (which already
-    holds the freshly-created session) — selectors and retry pattern ported
-    from VVRO's open_fiverr_activation_in_inbox(), adapted to switch_tab()
-    instead of a second browser process."""
-    await browser.switch_tab(outlook_tab)
-    await browser.open("https://outlook.live.com/mail/0/")
+) -> bool:
+    """Find the Fiverr verification email in the outlook browser, extract
+    the activation link, then open it in the fiverr browser."""
+    await outlook_browser.open("https://outlook.live.com/mail/0/")
 
     if not reporter.step("Waiting for Fiverr verification email"):
         reporter.needs_review("Aborted by FGOS while waiting for the verification email")
@@ -218,20 +223,20 @@ async def _locate_and_open_verification_link(
 
     found = False
     for attempt in range(1, 7):
-        if await browser.wait_for(FIVERR_SENDER_SELECTOR, timeout_ms=20000):
+        if await outlook_browser.wait_for(FIVERR_SENDER_SELECTOR, timeout_ms=20000):
             found = True
             break
         reporter.step(f"Verification email not visible yet (attempt {attempt}/6)")
         await asyncio.sleep(20)
-        await browser.open("https://outlook.live.com/mail/0/")
+        await outlook_browser.open("https://outlook.live.com/mail/0/")
     if not found:
         reporter.needs_review(f"Fiverr verification email never arrived for {identity.email}")
-        return None
+        return False
 
     clicked = False
     for attempt in range(1, 6):
         try:
-            await browser.click(FIVERR_SENDER_SELECTOR)
+            await outlook_browser.click(FIVERR_SENDER_SELECTOR)
             clicked = True
             break
         except Exception as e:  # noqa: BLE001 - retry loop, last failure reported below
@@ -239,18 +244,18 @@ async def _locate_and_open_verification_link(
             await asyncio.sleep(1)
     if not clicked:
         reporter.needs_review(f"Could not open Fiverr verification email for {identity.email}")
-        return None
+        return False
 
-    if not await browser.wait_for(READING_PANE_SELECTOR, timeout_ms=60000):
+    if not await outlook_browser.wait_for(READING_PANE_SELECTOR, timeout_ms=60000):
         reporter.needs_review("Verification email reading pane never appeared")
-        return None
+        return False
 
-    links = await browser.query_links(f"{READING_PANE_SELECTOR} {ACTIVATION_LINK_PREFERRED_SELECTOR}")
+    links = await outlook_browser.query_links(f"{READING_PANE_SELECTOR} {ACTIVATION_LINK_PREFERRED_SELECTOR}")
     if not links:
-        links = await browser.query_links(f"{READING_PANE_SELECTOR} {ACTIVATION_LINK_SELECTOR}")
+        links = await outlook_browser.query_links(f"{READING_PANE_SELECTOR} {ACTIVATION_LINK_SELECTOR}")
     if not links:
         reporter.needs_review("No Fiverr activation link found in verification email")
-        return None
+        return False
 
     href = None
     for link in links:
@@ -260,15 +265,14 @@ async def _locate_and_open_verification_link(
     if href is None:
         href = links[0]["href"]
 
-    base_url = await browser.current_url() or "https://outlook.live.com/mail/0/"
+    base_url = await outlook_browser.current_url() or "https://outlook.live.com/mail/0/"
     href = urljoin(base_url, href)
 
-    await browser.switch_tab(fiverr_tab)
     if not reporter.step("Opening Fiverr activation link"):
         reporter.needs_review("Aborted by FGOS before opening the activation link")
-        return None
-    await browser.open(href)
-    return href
+        return False
+    await fiverr_browser.open(href)
+    return True
 
 
 async def _confirm_fiverr_logged_in(browser: BrowserAdapter, reporter: Reporter) -> bool:
@@ -280,39 +284,48 @@ async def _confirm_fiverr_logged_in(browser: BrowserAdapter, reporter: Reporter)
     return signed_in
 
 
-async def run(browser: BrowserAdapter, job: dict[str, Any], reporter: Reporter) -> None:
-    outlook_tab = await browser.current_tab()
-
-    identity = await _signup_outlook(browser, reporter)
+async def run(outlook_browser: BrowserAdapter, job: dict[str, Any], reporter: Reporter) -> None:
+    identity = await _signup_outlook(outlook_browser, reporter)
     if identity is None:
         return  # reporter already recorded NEEDS_REVIEW/FAILED above
 
-    if not await _open_outlook_inbox(browser, reporter):
+    if not await _open_outlook_inbox(outlook_browser, reporter):
         reporter.fail(f"Could not verify Outlook inbox for {identity.email}")
         return
 
-    fiverr_tab = await _signup_fiverr(browser, reporter, identity, job)
-    if fiverr_tab is None:
-        return  # reporter already recorded NEEDS_REVIEW/BLOCKED above
+    # Start the secondary Fiverr browser
+    browser_profile = job.get("browser_profile") or {"browser_type": "camoufox", "fingerprint_config": {}}
+    fiverr_browser = create_browser_adapter(browser_profile.get("browser_type", "camoufox"))
+    proxy = job.get("_proxy")
+    
+    try:
+        if not reporter.step("Starting separate Fiverr browser"):
+            reporter.blocked("Aborted by FGOS (campaign paused) before Fiverr browser start")
+            return
+        await fiverr_browser.start(browser_profile.get("fingerprint_config", {}), proxy)
 
-    href = await _locate_and_open_verification_link(browser, reporter, outlook_tab, fiverr_tab, identity)
-    if href is None:
-        return  # reporter already recorded NEEDS_REVIEW above
+        if not await _signup_fiverr(outlook_browser, fiverr_browser, reporter, identity, job):
+            return  # reporter already recorded NEEDS_REVIEW/BLOCKED above
 
-    signed_in = await _confirm_fiverr_logged_in(browser, reporter)
-    session_state = await browser.get_session_state()
+        if not await _locate_and_open_verification_link(outlook_browser, fiverr_browser, reporter, identity):
+            return  # reporter already recorded NEEDS_REVIEW above
 
-    account_result = {
-        "email": identity.email,
-        "username": identity.fiverr_username or identity.email.split("@")[0],
-        "password": identity.password,
-        "platform": "fiverr",
-        "browser_profile_id": (job.get("browser_profile") or {}).get("profile_id"),
-        "network_profile_id": (job.get("network_profile") or {}).get("profile_id"),
-        "session_state": session_state,
-    }
-    reporter.step("Completed")
-    reporter.complete(
-        metadata={"email": identity.email, "fiverr_login_confirmed": signed_in},
-        account_result=account_result,
-    )
+        signed_in = await _confirm_fiverr_logged_in(fiverr_browser, reporter)
+        session_state = await fiverr_browser.get_session_state()
+
+        account_result = {
+            "email": identity.email,
+            "username": identity.fiverr_username or identity.email.split("@")[0],
+            "password": identity.password,
+            "platform": "fiverr",
+            "browser_profile_id": (job.get("browser_profile") or {}).get("profile_id"),
+            "network_profile_id": (job.get("network_profile") or {}).get("profile_id"),
+            "session_state": session_state,
+        }
+        reporter.step("Completed")
+        reporter.complete(
+            metadata={"email": identity.email, "fiverr_login_confirmed": signed_in},
+            account_result=account_result,
+        )
+    finally:
+        await fiverr_browser.close()

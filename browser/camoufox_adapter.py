@@ -156,6 +156,29 @@ class CamoufoxAdapter(BrowserAdapter):
                 await asyncio.sleep(random.uniform(0.2, 0.5))
                 await locator.type(char, delay=random.uniform(0.05, 0.18))
 
+    async def press_and_hold(self, selector: str, duration_ms: int = 10000) -> None:
+        locator = self._page.locator(selector)
+        await locator.wait_for(state="visible", timeout=15000)
+        
+        # Calculate the bounding box and move the mouse to its center
+        box = await locator.bounding_box()
+        if not box:
+            raise ValueError(f"Could not calculate bounding box for '{selector}'")
+            
+        x = box["x"] + box["width"] / 2
+        y = box["y"] + box["height"] / 2
+        
+        # Move slightly to simulate human movement
+        await self._page.mouse.move(x + random.uniform(-2, 2), y + random.uniform(-2, 2))
+        
+        log.info(f"Pressing and holding '{selector}' for {duration_ms}ms")
+        await self._page.mouse.down()
+        await asyncio.sleep(duration_ms / 1000.0)
+        await self._page.mouse.up()
+        
+        # Move mouse away after release
+        await self._page.mouse.move(x + random.uniform(10, 50), y + random.uniform(10, 50))
+
     async def upload(self, selector: str, file_path: str) -> None:
         file_input = self._page.locator(selector)
         await file_input.wait_for(state="attached", timeout=10000)

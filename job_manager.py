@@ -121,6 +121,7 @@ class JobManager:
                     return
                 job = {**job, "_account_credentials": creds}
 
+            job["_proxy"] = proxy
             await handler(browser, job, reporter)
         finally:
             await browser.close()
