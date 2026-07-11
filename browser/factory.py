@@ -8,19 +8,19 @@ from __future__ import annotations
 
 from browser.adapter import BrowserAdapter
 from browser.camoufox_adapter import CamoufoxAdapter
-
-_REGISTRY: dict[str, type[BrowserAdapter]] = {
-    "camoufox": CamoufoxAdapter,
-    # "playwright": PlaywrightAdapter,  # future
-    # "chrome": ChromeAdapter,          # future
-}
-
+from browser.playwright_adapter import PlaywrightAdapter
 
 def create_browser_adapter(browser_type: str) -> BrowserAdapter:
-    cls = _REGISTRY.get(browser_type)
-    if cls is None:
+    if browser_type == "camoufox":
+        return CamoufoxAdapter()
+    elif browser_type == "playwright_chromium":
+        return PlaywrightAdapter(browser_type="chromium")
+    elif browser_type == "playwright_firefox":
+        return PlaywrightAdapter(browser_type="firefox")
+    elif browser_type == "playwright_webkit":
+        return PlaywrightAdapter(browser_type="webkit")
+    else:
         raise ValueError(
             f"Unknown browser_type '{browser_type}' — FGOS sent an adapter this runner "
-            f"doesn't implement yet. Known: {list(_REGISTRY)}"
+            f"doesn't implement yet. Known: camoufox, playwright_chromium, playwright_firefox, playwright_webkit"
         )
-    return cls()
