@@ -132,7 +132,7 @@ class PlaywrightAdapter(BrowserAdapter):
         locator = self._page.locator(selector)
         if kwargs.get("force"):
             kwargs.pop("force")
-            await locator.click(timeout=timeout_ms, force=True, **kwargs)
+            await locator.first.evaluate("node => node.click()")
             return
             
         await locator.wait_for(state="visible", timeout=timeout_ms)
