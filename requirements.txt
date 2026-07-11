@@ -2,3 +2,5 @@ requests>=2.31.0
 camoufox[geoip]>=0.4.0
 playwright==1.60.0
 browserforge>=1.2.0
+cloakbrowser[geoip]>=0.4.0
+nodriver>=0.1.0

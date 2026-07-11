@@ -292,10 +292,10 @@ async def run(outlook_browser: BrowserAdapter, job: dict[str, Any], reporter: Re
 
     # Define the fallback engines to try if Fiverr throws a CAPTCHA
     engines_to_try = [
+        "cloakbrowser",
         "camoufox",
+        "nodriver",
         "playwright_chromium",
-        "playwright_chrome",
-        "playwright_edge",
         "playwright_firefox"
     ]
     

@@ -19,8 +19,14 @@ def create_browser_adapter(browser_type: str) -> BrowserAdapter:
         return PlaywrightAdapter(browser_type="firefox")
     elif browser_type == "playwright_webkit":
         return PlaywrightAdapter(browser_type="webkit")
+    elif browser_type == "cloakbrowser":
+        from browser.cloakbrowser_adapter import CloakBrowserAdapter
+        return CloakBrowserAdapter()
+    elif browser_type == "nodriver":
+        from browser.nodriver_adapter import NodriverAdapter
+        return NodriverAdapter()
     else:
         raise ValueError(
             f"Unknown browser_type '{browser_type}' — FGOS sent an adapter this runner "
-            f"doesn't implement yet. Known: camoufox, playwright_chromium, playwright_firefox, playwright_webkit"
+            f"doesn't implement yet. Known: camoufox, cloakbrowser, nodriver, playwright_chromium, playwright_firefox, playwright_webkit"
         )

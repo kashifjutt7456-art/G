@@ -106,24 +106,64 @@ class JobManager:
                 reporter.fail(f"VPN connect failed: {e}")
                 return
 
-        browser = create_browser_adapter(browser_profile.get("browser_type", "camoufox"))
-        try:
-            if not reporter.step("Starting browser"):
-                reporter.blocked("Aborted by FGOS (campaign paused) before browser start")
-                return
-            await browser.start(browser_profile.get("fingerprint_config", {}), proxy)
+        primary_browser = browser_profile.get("browser_type", "camoufox")
+        # Build priority queue of browsers to attempt
+        engines_to_try = [primary_browser]
+        all_engines = ["cloakbrowser", "camoufox", "nodriver", "playwright_chromium"]
+        for eng in all_engines:
+            if eng not in engines_to_try:
+                engines_to_try.append(eng)
 
-            # Real credentials are fetched here, never carried in the job payload.
-            if account.get("account_id") and job_type != "CREATE_BUYER_ACCOUNT":
-                creds = self.accounts.load_account_credentials(account["account_id"])
-                if creds is None:
-                    reporter.fail(f"Could not fetch credentials for account {account['account_id']}")
+        success = False
+        last_error = None
+        browser = None
+
+        for engine in engines_to_try:
+            reporter.step(f"Attempting job execution using browser: {engine}")
+            try:
+                browser = create_browser_adapter(engine)
+            except ValueError as e:
+                reporter.step(f"Skipping browser {engine} (not configured/implemented): {e}")
+                continue
+
+            try:
+                if not reporter.step(f"Starting browser: {engine}"):
+                    reporter.blocked(f"Aborted by FGOS before starting browser: {engine}")
                     return
-                job = {**job, "_account_credentials": creds}
+                
+                await browser.start(browser_profile.get("fingerprint_config", {}), proxy)
+                
+                # Real credentials are fetched here, never carried in the job payload.
+                if account.get("account_id") and job_type != "CREATE_BUYER_ACCOUNT":
+                    creds = self.accounts.load_account_credentials(account["account_id"])
+                    if creds is None:
+                        reporter.fail(f"Could not fetch credentials for account {account['account_id']}")
+                        return
+                    job = {**job, "_account_credentials": creds}
+                
+                job["_proxy"] = proxy
+                await handler(browser, job, reporter)
+                success = True
+                reporter.step(f"Success with browser: {engine}")
+                break
+            except Exception as e:
+                last_error = e
+                log.warning(f"Browser {engine} failed during execution: {e}")
+                reporter.step(f"Browser {engine} failed: {e}")
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+                browser = None
 
-            job["_proxy"] = proxy
-            await handler(browser, job, reporter)
+        if not success:
+            reporter.fail(f"All attempted browsers failed. Last error: {last_error}")
+            return
+        
+        try:
+            # We succeeded, so now clean up the successful browser
+            if browser:
+                await browser.close()
         finally:
-            await browser.close()
             if network_profile and network_profile.get("provider") not in (None, "None"):
                 await vpn.disconnect()
