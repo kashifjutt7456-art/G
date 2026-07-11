@@ -25,45 +25,17 @@ except ImportError:  # pragma: no cover - surfaced clearly at runtime instead
     AsyncCamoufox = None  # type: ignore[assignment,misc]
 
 try:
-    from playwright_stealth import Stealth
-except ImportError:  # pragma: no cover - optional dependency
-    class Stealth:  # type: ignore[no-redef]
-        async def apply_stealth_async(self, context: Any) -> None:
-            return
-
-try:
     from browserforge.fingerprints import FingerprintGenerator, Screen
 except ImportError:  # pragma: no cover - surfaced clearly at runtime instead
     FingerprintGenerator = None  # type: ignore[assignment,misc]
     Screen = None  # type: ignore[assignment,misc]
 
 
-def _build_init_script(fp_headers: dict[str, str], locale: str | None) -> str:
-    """Navigator/canvas overrides to align with the generated fingerprint.
-    Ported verbatim in spirit from VVRO's inline init_js (behavior preserved,
-    no CSV/global state)."""
-    ua = (fp_headers.get("User-Agent") or "").replace('"', '\\"')
-    lang = (locale or "en-US").split(",")[0]
-    return f"""
-    (() => {{
-        try {{
-            Object.defineProperty(navigator, 'webdriver', {{ get: () => false }});
-            if ("{ua}") Object.defineProperty(navigator, 'userAgent', {{ get: () => "{ua}" }});
-            Object.defineProperty(navigator, 'language', {{ get: () => '{lang}' }});
-            Object.defineProperty(navigator, 'languages', {{ get: () => ['{lang}', 'en'] }});
-            Object.defineProperty(navigator, 'platform', {{ get: () => 'Win32' }});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => 8 }});
-            const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            HTMLCanvasElement.prototype.toDataURL = function() {{
-                try {{
-                    const ctx = this.getContext('2d');
-                    if (ctx) {{ ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0, 0, 1, 1); }}
-                }} catch (e) {{}}
-                return origToDataURL.apply(this, arguments);
-            }};
-        }} catch (e) {{}}
-    }})();
-    """
+# NOTE: No navigator init_script overrides here.
+# Camoufox already patches webdriver/automation flags natively at the C++ level.
+# Object.defineProperty overrides on navigator are themselves a PerimeterX bot
+# signal — they leave tampered property descriptors that PerimeterX probes for
+# via Object.getOwnPropertyDescriptor(navigator, 'webdriver').
 
 
 class CamoufoxAdapter(BrowserAdapter):
@@ -106,9 +78,11 @@ class CamoufoxAdapter(BrowserAdapter):
         if FingerprintGenerator is not None and Screen is not None:
             try:
                 bf_screen = Screen(min_width=window[0], max_width=window[0], min_height=window[1], max_height=window[1])
-                fg = FingerprintGenerator(browser="chrome")
+                # Camoufox is Firefox-based — must generate Firefox fingerprints.
+                # Chrome fingerprints on a Firefox engine = instant UA/header mismatch
+                # that PerimeterX catches. Do NOT use browser="chrome" here.
+                fg = FingerprintGenerator(browser="firefox")
                 fp = fg.generate(os=os_name, screen=bf_screen)
-                fp_headers = dict(getattr(fp, "headers", {}) or {})
                 locale = getattr(fp, "locale", None)
                 fp_fonts = getattr(fp, "fonts", None)
                 if isinstance(fp_fonts, list) and fp_fonts:
@@ -122,6 +96,13 @@ class CamoufoxAdapter(BrowserAdapter):
             "block_webrtc": block_webrtc,
             "headless": headless,
             "window": window,
+            "geoip": True,  # Automatically matches timezone, locale, and coordinates to the VPN IP
+            "firefox_user_prefs": {
+                # Disable WebGL entirely. GitHub Actions uses "Mesa/llvmpipe" software rendering,
+                # which is the #1 dead giveaway for a datacenter/VM to PerimeterX.
+                # Disabled WebGL just looks like a privacy-hardened browser (like Tor).
+                "webgl.disabled": True
+            }
         }
         if fonts:
             camoufox_kwargs["fonts"] = fonts
@@ -133,19 +114,17 @@ class CamoufoxAdapter(BrowserAdapter):
             }
 
         self._camoufox_cm = AsyncCamoufox(**camoufox_kwargs)
-        self._browser = await self._camoufox_cm.__aenter__()
-        self._context = await self._browser.new_context()
+        # AsyncCamoufox.__aenter__() returns a PlaywrightBrowserContext directly,
+        # NOT a bare Browser. Calling .new_context() on it triggers a protocol
+        # error (Browser.setDefaultViewport with isMobile not in scheme).
+        # The correct pattern is to use the returned object as the context itself.
+        self._context = await self._camoufox_cm.__aenter__()
 
-        try:
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self._context)
-        except Exception as e:  # noqa: BLE001 - stealth is best-effort
-            log.debug("playwright-stealth apply failed (continuing): %s", e)
-
-        try:
-            await self._context.add_init_script(_build_init_script(fp_headers, locale))
-        except Exception as e:  # noqa: BLE001
-            log.debug("init script injection failed (continuing): %s", e)
+        # NOTE: playwright-stealth is NOT applied here.
+        # It is a Chromium-specific library that injects Chrome patches (e.g.
+        # chrome.runtime, plugins array) that are meaningless — and broken —
+        # on a Firefox engine and actively worsen the fingerprint consistency.
+        # Camoufox handles all stealth natively; no JS-level overrides needed.
 
         page = await self._context.new_page()
         self._register_tab(page)
@@ -153,16 +132,21 @@ class CamoufoxAdapter(BrowserAdapter):
     async def open(self, url: str, timeout_ms: int = 60000) -> None:
         await self._page.goto(url, timeout=timeout_ms)
 
-    async def click(self, selector: str, timeout_ms: int = 15000) -> None:
+    async def click(self, selector: str, timeout_ms: int = 15000, **kwargs: Any) -> None:
         locator = self._page.locator(selector)
+        if kwargs.get("force"):
+            kwargs.pop("force")
+            await locator.click(timeout=timeout_ms, force=True)
+            return
+            
         await locator.wait_for(state="visible", timeout=timeout_ms)
-        await locator.click(timeout=timeout_ms)
+        await locator.click(timeout=timeout_ms, **kwargs)
 
-    async def type(self, selector: str, text: str, humanize: bool = True) -> None:
+    async def type(self, selector: str, text: str, humanize: bool = True, **kwargs: Any) -> None:
         locator = self._page.locator(selector)
         await locator.wait_for(state="visible", timeout=15000)
         if not humanize:
-            await locator.fill(text)
+            await locator.fill(text, **kwargs)
             return
         # Human-like typing with occasional backspace-retry, ported from VVRO.
         for char in text:
@@ -270,5 +254,4 @@ class CamoufoxAdapter(BrowserAdapter):
         self._pages = {}
         self._active = None
         self._context = None
-        self._browser = None
         self._camoufox_cm = None

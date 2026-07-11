@@ -113,7 +113,7 @@ class OpenVPNAdapter(VPNAdapter):
             "--log", str(self._log_path),
         ]
         if self._log_path.exists():
-            self._log_path.unlink()
+            subprocess.run(["sudo", "rm", "-f", str(self._log_path)], check=False)
         subprocess.run(cmd, check=True, capture_output=True)
         self._proc_started = True
         await self._wait_for_tunnel()
@@ -139,6 +139,7 @@ class OpenVPNAdapter(VPNAdapter):
             await asyncio.sleep(interval)
             if not self._log_path.exists():
                 continue
+            subprocess.run(["sudo", "chmod", "644", str(self._log_path)], check=False)
             text = self._log_path.read_text(errors="ignore")
             if "Initialization Sequence Completed" in text:
                 return

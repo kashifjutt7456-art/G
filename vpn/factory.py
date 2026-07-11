@@ -7,10 +7,13 @@ from vpn.adapter import VPNAdapter
 from vpn.no_vpn_adapter import NoVPNAdapter
 from vpn.nord_adapter import NordAdapter
 from vpn.pia_adapter import PIAAdapter
+from vpn.proxy_adapter import ProxyAdapter
 
 _REGISTRY: dict[str, type[VPNAdapter]] = {
     "PIA": PIAAdapter,
     "Nord": NordAdapter,
+    "Proxy": ProxyAdapter,
+    "Residential": ProxyAdapter,
     "None": NoVPNAdapter,
 }
 

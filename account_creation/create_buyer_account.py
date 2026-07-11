@@ -52,7 +52,9 @@ LAST_NAME_SELECTOR = "#lastNameInput"
 BIRTH_MONTH_DROPDOWN_SELECTOR = "#BirthMonthDropdown"
 BIRTH_DAY_DROPDOWN_SELECTOR = "#BirthDayDropdown"
 BIRTH_YEAR_INPUT_SELECTOR = "input[name='BirthYear']"
-MONTH_OPTION_SELECTOR = "div[role='option']:has-text('January')"
+# Month options (1-12) are localized by GeoIP (e.g. Enero, Janvier). 
+# We select the first option (nth=0) to pick the first month regardless of language.
+MONTH_OPTION_SELECTOR = "div[role='option'] >> nth=0"
 # Day options ("1".."31") all contain "1" as a substring (10, 11, 21, 31...) —
 # `>> nth=0` pins the first DOM match, which is day 1 given Outlook's
 # ascending option order. Selector-string equivalent of VVRO's `.first`.
@@ -84,9 +86,9 @@ async def _select_outlook_dob(browser: BrowserAdapter) -> None:
     select_outlook_dob_exact(), a real, working sequence against Outlook's
     dropdown widgets."""
     await browser.click(BIRTH_MONTH_DROPDOWN_SELECTOR)
-    await browser.click(MONTH_OPTION_SELECTOR)
+    await browser.click(MONTH_OPTION_SELECTOR, force=True)
     await browser.click(BIRTH_DAY_DROPDOWN_SELECTOR)
-    await browser.click(DAY_OPTION_SELECTOR)
+    await browser.click(DAY_OPTION_SELECTOR, force=True)
     year = str(random.randint(1980, 2000))
     await browser.type(BIRTH_YEAR_INPUT_SELECTOR, year, humanize=False)
 
