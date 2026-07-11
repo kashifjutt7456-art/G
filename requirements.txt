@@ -4,3 +4,4 @@ playwright==1.60.0
 browserforge>=1.2.0
 cloakbrowser[geoip]>=0.4.0
 nodriver>=0.1.0
+playwright-stealth>=1.0.6
