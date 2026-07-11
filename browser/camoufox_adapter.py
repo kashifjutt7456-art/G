@@ -136,7 +136,9 @@ class CamoufoxAdapter(BrowserAdapter):
         locator = self._page.locator(selector)
         if kwargs.get("force"):
             kwargs.pop("force")
-            await locator.click(timeout=timeout_ms, force=True)
+            # Don't wait_for visible if forcing, Playwright will still try to wait for attach, but 
+            # won't throw on pointer interception because force=True bypasses hit-testing
+            await locator.click(timeout=timeout_ms, force=True, **kwargs)
             return
             
         await locator.wait_for(state="visible", timeout=timeout_ms)
