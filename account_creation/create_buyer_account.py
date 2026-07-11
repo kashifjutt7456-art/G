@@ -86,9 +86,9 @@ async def _select_outlook_dob(browser: BrowserAdapter) -> None:
     """Fixed Jan 1 + a random adult year — ported from VVRO's
     select_outlook_dob_exact(), a real, working sequence against Outlook's
     dropdown widgets."""
-    await browser.click(BIRTH_MONTH_DROPDOWN_SELECTOR)
+    await browser.click(BIRTH_MONTH_DROPDOWN_SELECTOR, force=True)
     await browser.click(MONTH_OPTION_SELECTOR, force=True)
-    await browser.click(BIRTH_DAY_DROPDOWN_SELECTOR)
+    await browser.click(BIRTH_DAY_DROPDOWN_SELECTOR, force=True)
     await browser.click(DAY_OPTION_SELECTOR, force=True)
     year = str(random.randint(1980, 2000))
     await browser.type(BIRTH_YEAR_INPUT_SELECTOR, year, humanize=False)
