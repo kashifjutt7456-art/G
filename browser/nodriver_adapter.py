@@ -57,7 +57,7 @@ class NodriverAdapter(BrowserAdapter):
 
         # Build chrome args
         browser_args = [
-            f"--window-size={window[0]},{window[1]}"
+            f"--window-size=1280,800"
         ]
 
         if proxy:
@@ -121,23 +121,16 @@ class NodriverAdapter(BrowserAdapter):
                 # Retype correct character
                 await el.send_keys(char)
 
-    async def press_and_hold(self, selector: str, duration_ms: int = 10000) -> None:
-        el = await self._page.select(selector)
-        if not el:
-            raise ValueError(f"Element not found: '{selector}'")
-
-        # Get layout coordinates via CDP
-        box_model = await el.get_box_model()
-        if not box_model or not getattr(box_model, "content", None):
-            raise ValueError(f"Could not calculate bounding box for '{selector}'")
-
-        content = box_model.content
-        # content is [x1, y1, x2, y2, x3, y3, x4, y4]
-        x = (content[0] + content[4]) / 2
-        y = (content[1] + content[5]) / 2
-
-        log.info(f"[Nodriver] Pressing and holding '{selector}' at ({x}, {y}) for {duration_ms}ms")
+    async def press_and_hold_at(self, x: int, y: int, duration_ms: int = 15000) -> None:
+        log.info(f"[Nodriver] Pressing and holding at ({x}, {y}) for {duration_ms}ms")
         
+        # Dispatch Mouse Moved to coordinates
+        await self._page.send(cdp_input.dispatch_mouse_event(
+            type_=cdp_input.MouseEventType.mouse_moved,
+            x=x,
+            y=y
+        ))
+
         # Dispatch Mouse Down
         await self._page.send(cdp_input.dispatch_mouse_event(
             type_=cdp_input.MouseEventType.mouse_pressed,
@@ -157,6 +150,16 @@ class NodriverAdapter(BrowserAdapter):
             button=cdp_input.MouseButton.left,
             click_count=1
         ))
+        
+        # Move mouse away
+        await self._page.send(cdp_input.dispatch_mouse_event(
+            type_=cdp_input.MouseEventType.mouse_moved,
+            x=x + random.uniform(10, 50),
+            y=y + random.uniform(10, 50)
+        ))
+
+    async def press_and_hold(self, selector: str, duration_ms: int = 10000) -> None:
+        el = await self._page.select(selector)
 
     async def upload(self, selector: str, file_path: str) -> None:
         el = await self._page.select(selector)

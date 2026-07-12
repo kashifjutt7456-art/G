@@ -37,6 +37,10 @@ class BrowserAdapter(ABC):
         """Simulate a mouse press and hold on an element for the specified duration (for CAPTCHAs)."""
 
     @abstractmethod
+    async def press_and_hold_at(self, x: int, y: int, duration_ms: int = 15000) -> None:
+        """Simulate a mouse press and hold at specific coordinates (for CAPTCHAs)."""
+
+    @abstractmethod
     async def upload(self, selector: str, file_path: str) -> None:
         """Attach a local file to a file input matching selector."""
 

@@ -66,7 +66,7 @@ class CloakBrowserAdapter(BrowserAdapter):
 
         window = tuple(fingerprint_config.get("window", (1280, 800)))
         context_args = {
-            "viewport": {"width": window[0], "height": window[1]}
+            "viewport": {"width": 1280, "height": 800}
         }
         self._context = await self._browser.new_context(**context_args)
         
@@ -99,6 +99,14 @@ class CloakBrowserAdapter(BrowserAdapter):
                 await locator.press("Backspace")
                 await asyncio.sleep(random.uniform(0.2, 0.5))
                 await locator.type(char, delay=random.uniform(0.05, 0.18))
+
+    async def press_and_hold_at(self, x: int, y: int, duration_ms: int = 15000) -> None:
+        log.info(f"[CloakBrowser] Pressing and holding at ({x}, {y}) for {duration_ms}ms")
+        await self._page.mouse.move(x, y)
+        await self._page.mouse.down()
+        await asyncio.sleep(duration_ms / 1000.0)
+        await self._page.mouse.up()
+        await self._page.mouse.move(x + random.uniform(10, 50), y + random.uniform(10, 50))
 
     async def press_and_hold(self, selector: str, duration_ms: int = 10000) -> None:
         locator = self._page.locator(selector)

@@ -122,13 +122,46 @@ async def _signup_outlook(browser: BrowserAdapter, reporter: Reporter) -> Option
 
     title = (await browser.page_title() or "").lower()
     if "human" in title or "captcha" in title or "can't" in title:
-        screenshot = await browser.screenshot()
-        reporter.add_screenshot_ref(f"outlook_captcha_{identity.email}.png")
-        reporter.needs_review(
-            f"Outlook signup hit a CAPTCHA/verification wall (title='{title}')",
-            metadata={"email": identity.email, "screenshot_bytes": len(screenshot)},
-        )
-        return None
+        if "can't" in title:
+            reporter.needs_review("Outlook signup blocked ('Can't add name')")
+            return None
+        
+        reporter.step("Attempting Outlook CAPTCHA challenge via coordinate press-and-hold...")
+        
+        async def _captcha_attempts(max_attempts=3):
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    await browser.press_and_hold_at(680, 518, 15000)
+                except Exception as e:
+                    pass
+                await asyncio.sleep(7)
+                curr_title = (await browser.page_title() or "").lower()
+                if "human" not in curr_title and "captcha" not in curr_title:
+                    return True
+            return False
+            
+        cleared = await _captcha_attempts(3)
+        if not cleared:
+            reporter.step("CAPTCHA still present. Trying back-button flow...")
+            try:
+                # Try to click standard back buttons in Outlook flows
+                for sel in ["button#back-button", "button[aria-label='Back']", "button[data-testid='leftArrowIcon']"]:
+                    if await browser.wait_for(sel, timeout_ms=2000):
+                        await browser.click(sel, timeout_ms=3000)
+                        break
+                await browser.click(NEXT_BUTTON_SELECTOR, timeout_ms=3000)
+                cleared = await _captcha_attempts(3)
+            except Exception:
+                pass
+                
+        if not cleared:
+            screenshot = await browser.screenshot()
+            reporter.add_screenshot_ref(f"outlook_captcha_{identity.email}.png")
+            reporter.needs_review(
+                f"Outlook CAPTCHA solver failed to clear after all attempts (title='{title}')",
+                metadata={"email": identity.email, "screenshot_bytes": len(screenshot)},
+            )
+            return None
 
     reporter.step(f"Outlook account created: {identity.email}")
     return identity
