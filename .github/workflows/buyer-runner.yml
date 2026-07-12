@@ -1,0 +1,98 @@
+name: FGOS Buyer Network Runner
+on:
+  workflow_dispatch:
+    inputs:
+      runner_count:
+        description: "How many runner processes to start"
+        required: false
+        default: "1"
+      browser:
+        description: "Browser adapter"
+        required: false
+        default: "camoufox"
+      vpn:
+        description: "VPN provider"
+        required: false
+        default: "none"
+      environment:
+        description: "Target environment"
+        required: false
+        default: "production"
+
+concurrency:
+  group: buyer-network-runner
+  cancel-in-progress: false
+
+jobs:
+  run-buyer-network-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      RUNNER_COUNT: ${{ github.event.inputs.runner_count || '1' }}
+      BROWSER_TYPE: ${{ github.event.inputs.browser || 'camoufox' }}
+      VPN_PROVIDER: ${{ github.event.inputs.vpn || 'none' }}
+      FGOS_ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+      BUYER_NETWORK_API_KEY: ${{ secrets.BUYER_NETWORK_API_KEY }}
+      FGOS_API_URL: ${{ vars.FGOS_API_URL || 'https://api.fgos.site/api/v1/ingestion/buyer-network' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m camoufox fetch
+          python -m cloakbrowser install
+
+      - name: Install OpenVPN + Xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openvpn unzip xvfb
+          openvpn --version | head -1
+
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install chromium firefox --with-deps
+
+      - name: Start Buyer Network Runner(s)
+        run: |
+          set -e
+          mkdir -p /tmp/bn_logs
+          PIDS=()
+          for i in $(seq 1 "${RUNNER_COUNT:-1}"); do
+            RUNNER_ID="bn-gh-${GITHUB_RUN_ID}-${i}" \
+            BUYER_NETWORK_API_KEY="$BUYER_NETWORK_API_KEY" \
+            FGOS_API_URL="$FGOS_API_URL" \
+            xvfb-run -a python -u main.py > "/tmp/bn_logs/runner_${i}.log" 2>&1 &
+            PIDS+=($!)
+            echo "Started runner ${i} (pid ${PIDS[-1]})"
+          done
+          echo "PIDS=${PIDS[*]}" >> "$GITHUB_ENV"
+          wait
+
+      - name: Notify FGOS Run Complete
+        if: always()
+        run: |
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+          OUTCOME="${{ job.status }}"
+          curl -s -X POST "${FGOS_API_URL}/runner-workflow-done" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $BUYER_NETWORK_API_KEY" \
+            -d "{\"repo_name\":\"$REPO\",\"run_id\":$RUN_ID,\"outcome\":\"$OUTCOME\"}" || true
+          echo "FGOS notified: repo=$REPO run_id=$RUN_ID outcome=$OUTCOME"
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buyer-network-runner-log-${{ github.run_id }}
+          path: /tmp/bn_logs/
+          retention-days: 7
