@@ -66,6 +66,10 @@ class Reporter:
             metadata=metadata or {}, account_result=account_result,
         )
 
+    def save_account(self, account_result: dict[str, Any]) -> None:
+        """Persist a partial account creation midway through a job."""
+        self.api.save_account(self.job_id, account_result)
+
     def fail(self, reason: str, metadata: Optional[dict[str, Any]] = None) -> None:
         self.api.report(
             job_id=self.job_id, state="FAILED", error_reason=reason,

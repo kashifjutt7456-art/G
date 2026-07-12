@@ -120,6 +120,19 @@ class ApiClient:
             payload["account_result"] = account_result
         return self._post("result", payload)
 
+    def save_account(
+        self,
+        job_id: str,
+        account_result: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        """Report partial credentials midway through a job."""
+        payload: dict[str, Any] = {
+            "runner_id": self.config.runner_id,
+            "job_id": job_id,
+            "account_result": account_result,
+        }
+        return self._post("save-account", payload)
+
     # ── Credentials — the ONLY way the runner learns a real secret. Fetched
     #    on demand, authenticated, and audited server-side on every call. ────
     def get_account_credentials(self, account_id: str) -> Optional[dict[str, Any]]:

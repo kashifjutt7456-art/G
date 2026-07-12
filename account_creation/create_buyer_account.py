@@ -86,10 +86,15 @@ async def _select_outlook_dob(browser: BrowserAdapter) -> None:
     """Fixed Jan 1 + a random adult year — ported from VVRO's
     select_outlook_dob_exact(), a real, working sequence against Outlook's
     dropdown widgets."""
-    await browser.click(BIRTH_MONTH_DROPDOWN_SELECTOR, force=True)
-    await browser.click(MONTH_OPTION_SELECTOR, force=True)
-    await browser.click(BIRTH_DAY_DROPDOWN_SELECTOR, force=True)
-    await browser.click(DAY_OPTION_SELECTOR, force=True)
+    # Click the label to safely open the dropdown without interception
+    await browser.click("label[for='BirthMonthDropdown']")
+    await browser.wait_for("div[role='option']", timeout_ms=5000)
+    await browser.click(MONTH_OPTION_SELECTOR)
+    
+    await browser.click("label[for='BirthDayDropdown']")
+    await browser.wait_for("div[role='option']:has-text('1')", timeout_ms=5000)
+    await browser.click(DAY_OPTION_SELECTOR)
+    
     year = str(random.randint(1980, 2000))
     await browser.type(BIRTH_YEAR_INPUT_SELECTOR, year, humanize=False)
 
@@ -149,7 +154,7 @@ def _generate_fiverr_username(identity: Identity) -> str:
 async def _signup_fiverr(
     outlook_browser: BrowserAdapter, fiverr_browser: BrowserAdapter, reporter: Reporter, identity: Identity, job: dict[str, Any]
 ) -> bool:
-    """Drive Fiverr signup in the dedicated Fiverr browser."""
+    """Drive Fiverr signup in the dedicated Fiverr browser.
     (and its logged-in session) untouched. Returns the Fiverr tab handle, or
     None if signup couldn't proceed (reporter already recorded why)."""
     signup_gig_url = (job.get("metadata") or {}).get("fiverr_signup_url")
@@ -289,6 +294,17 @@ async def run(outlook_browser: BrowserAdapter, job: dict[str, Any], reporter: Re
     if not await _open_outlook_inbox(outlook_browser, reporter):
         reporter.fail(f"Could not verify Outlook inbox for {identity.email}")
         return
+
+    # Midway save: persist the Outlook account before we hit the Fiverr CAPTCHA risk
+    reporter.step("Persisting Outlook account midway")
+    reporter.save_account({
+        "email": identity.email,
+        "username": identity.email.split("@")[0],
+        "password": identity.password,
+        "platform": "outlook",
+        "browser_profile_id": (job.get("browser_profile") or {}).get("profile_id"),
+        "network_profile_id": (job.get("network_profile") or {}).get("profile_id"),
+    })
 
     # Define the fallback engines to try if Fiverr throws a CAPTCHA
     engines_to_try = [
