@@ -51,26 +51,43 @@ jobs:
           python -m camoufox fetch
           python -m cloakbrowser install
 
-      - name: Install OpenVPN + Xvfb
+      - name: Install OpenVPN, Xvfb, VNC, noVNC
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y openvpn unzip xvfb
+          sudo apt-get install -y openvpn unzip xvfb x11vnc websockify novnc
           openvpn --version | head -1
 
       - name: Install Playwright browsers
         run: |
           python -m playwright install chromium firefox --with-deps
 
+      - name: Start VNC and Cloudflare Tunnel
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 2
+          x11vnc -display :99 -nopw -forever -bg -q
+          websockify --web /usr/share/novnc/ 8080 localhost:5900 -D
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          ./cloudflared tunnel --url http://localhost:8080 > /tmp/tunnel.log 2>&1 &
+          sleep 5
+          echo "======================================================"
+          echo "LIVE VNC STREAM URL:"
+          grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' /tmp/tunnel.log || echo "Failed to get tunnel URL"
+          echo "Append /vnc.html to the URL above to watch live!"
+          echo "======================================================"
+
       - name: Start Buyer Network Runner(s)
         run: |
           set -e
+          export DISPLAY=:99
           mkdir -p /tmp/bn_logs
           PIDS=()
           for i in $(seq 1 "${RUNNER_COUNT:-1}"); do
             RUNNER_ID="bn-gh-${GITHUB_RUN_ID}-${i}" \
             BUYER_NETWORK_API_KEY="$BUYER_NETWORK_API_KEY" \
             FGOS_API_URL="$FGOS_API_URL" \
-            xvfb-run -a python -u main.py > "/tmp/bn_logs/runner_${i}.log" 2>&1 &
+            python -u main.py > "/tmp/bn_logs/runner_${i}.log" 2>&1 &
             PIDS+=($!)
             echo "Started runner ${i} (pid ${PIDS[-1]})"
           done
